@@ -1,0 +1,33 @@
+From 98fc85b408340756d036a1a56094d65a52f31b12 Mon Sep 17 00:00:00 2001
+From: Jeremy Gebben <jgebben@codeaurora.org>
+Date: Mon, 8 Aug 2011 16:44:07 -0600
+Subject: [PATCH] msm: kgsl: fix possible memory leak in firmware loading
+
+Signed-off-by: Jeremy Gebben <jgebben@codeaurora.org>
+---
+ drivers/gpu/msm/adreno_ringbuffer.c |    2 ++
+ 1 files changed, 2 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/gpu/msm/adreno_ringbuffer.c b/drivers/gpu/msm/adreno_ringbuffer.c
+index c6bf7ff..6e1c34f 100644
+--- a/drivers/gpu/msm/adreno_ringbuffer.c
++++ b/drivers/gpu/msm/adreno_ringbuffer.c
+@@ -284,6 +284,7 @@ static int kgsl_ringbuffer_load_pm4_ucode(struct kgsl_device *device)
+ 		if (len % ((sizeof(uint32_t) * 3)) != sizeof(uint32_t)) {
+ 			KGSL_DRV_ERR(device, "Bad firmware size: %d\n", len);
+ 			ret = -EINVAL;
++			kfree(ptr);
+ 			goto err;
+ 		}
+ 
+@@ -326,6 +327,7 @@ static int kgsl_ringbuffer_load_pfp_ucode(struct kgsl_device *device)
+ 		if (len % sizeof(uint32_t) != 0) {
+ 			KGSL_DRV_ERR(device, "Bad firmware size: %d\n", len);
+ 			ret = -EINVAL;
++			kfree(ptr);
+ 			goto err;
+ 		}
+ 
+-- 
+1.7.5.4
+

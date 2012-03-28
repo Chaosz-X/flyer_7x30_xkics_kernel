@@ -1,0 +1,15 @@
+--- arch/arm/mach-msm/memory.c
++++ arch/arm/mach-msm/memory.c
+@@ -16,10 +16,12 @@
+ #include <linux/mm.h>
+ #include <linux/mm_types.h>
+ #include <linux/bootmem.h>
++#include <linux/memory_alloc.h>
+ #include <asm/pgtable.h>
+ #include <asm/io.h>
+ #include <asm/mach/map.h>
+ #include <asm/cacheflush.h>
++#include <mach/msm_memtypes.h>
+ 
+ int arch_io_remap_pfn_range(struct vm_area_struct *vma, unsigned long addr,
+ 			    unsigned long pfn, unsigned long size, pgprot_t prot)

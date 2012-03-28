@@ -1,0 +1,82 @@
+From 4e4d004fdeec9256a481e2182d271ea4db376a56 Mon Sep 17 00:00:00 2001
+From: Jeremy Gebben <jgebben@codeaurora.org>
+Date: Wed, 28 Dec 2011 00:35:11 +0100
+Subject: [PATCH] msm: kgsl: remove implicit dependencies on pmem and ashmem
+
+These drivers can be used if present, but they are not
+mandatory requirements.
+
+Change-Id: Id0c4292f73d448bf83cb0874eb7a0b1f78ac9a47
+Signed-off-by: Jeremy Gebben <jgebben@codeaurora.org>
+---
+ drivers/video/msm/gpu/kgsl_adreno205_hc/Kconfig |    2 +-
+ drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c  |   19 +++++++++++++++++++
+ 2 files changed, 20 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/Kconfig b/drivers/video/msm/gpu/kgsl_adreno205_hc/Kconfig
+index e17bbbb..37d773e 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/Kconfig
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/Kconfig
+@@ -1,7 +1,7 @@
+ config MSM_KGSL
+ 	tristate "MSM 3D Graphics driver"
+ 	default n
+-	depends on FB && ARM && ARCH_MSM && !MSM_HW3D && ANDROID_PMEM
++	depends on FB && ARM && ARCH_MSM && !MSM_HW3D
+ 	select GENERIC_ALLOCATOR
+ 	select FW_LOADER
+ 	select RELAY
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
+index da13eeb..2e80340 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
+@@ -1279,6 +1279,7 @@ static inline int _check_region(unsigned long start, unsigned long size,
+ 	return (end > len);
+ }
+ 
++#ifdef CONFIG_ANDROID_PMEM
+ static int kgsl_setup_phys_file(struct kgsl_mem_entry *entry,
+ 				struct kgsl_pagetable *pagetable,
+ 				unsigned int fd, unsigned int offset,
+@@ -1315,6 +1316,15 @@ static int kgsl_setup_phys_file(struct kgsl_mem_entry *entry,
+ 
+ 	return 0;
+ }
++#else
++static int kgsl_setup_phys_file(struct kgsl_mem_entry *entry,
++				struct kgsl_pagetable *pagetable,
++				unsigned int fd, unsigned int offset,
++				size_t size)
++{
++	return -EINVAL;
++}
++#endif
+ 
+ static int kgsl_setup_hostptr(struct kgsl_mem_entry *entry,
+ 			      struct kgsl_pagetable *pagetable,
+@@ -1364,6 +1374,7 @@ static int kgsl_setup_hostptr(struct kgsl_mem_entry *entry,
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_ASHMEM
+ static int kgsl_setup_ashmem(struct kgsl_mem_entry *entry,
+ 			     struct kgsl_pagetable *pagetable,
+ 			     int fd, void *hostptr, size_t size)
+@@ -1414,6 +1425,14 @@ static int kgsl_setup_ashmem(struct kgsl_mem_entry *entry,
+ 	put_ashmem_file(filep);
+ 	return ret;
+ }
++#else
++static int kgsl_setup_ashmem(struct kgsl_mem_entry *entry,
++			    struct kgsl_pagetable *pagetable,
++			    int fd, void *hostptr, size_t size)
++{
++	return -EINVAL;
++}
++#endif
+ 
+ static long kgsl_ioctl_map_user_mem(struct kgsl_device_private *dev_priv,
+ 				     unsigned int cmd, void *data)
+-- 
+1.7.5.4
+

@@ -1,0 +1,31 @@
+From e6005ac39bce4723bf300117279a52602e8875c2 Mon Sep 17 00:00:00 2001
+From: Jeremy Gebben <jgebben@codeaurora.org>
+Date: Tue, 27 Dec 2011 21:39:49 +0100
+Subject: [PATCH] msm: kgsl: remove extra rmb() for timestamp
+
+There's already an rmb() in the adreno timestamp read function,
+so this one is unnecessary.
+
+Change-Id: If9112e70f7033bef8d7784fd3761fe22a7df17c1
+Signed-off-by: Jeremy Gebben <jgebben@codeaurora.org>
+---
+ drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c |    3 ---
+ 1 files changed, 0 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
+index c1e7925..b82d071 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
+@@ -868,9 +868,6 @@ static long kgsl_ioctl_device_waittimestamp(struct kgsl_device_private
+ 					param->timestamp,
+ 					param->timeout);
+ 
+-	/* order reads to the buffer written to by the GPU */
+-	rmb();
+-
+ 	kgsl_memqueue_drain(dev_priv->device);
+ 
+ 	/* Fire off any pending suspend operations that are in flight */
+-- 
+1.7.5.4
+

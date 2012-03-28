@@ -1,0 +1,47 @@
+From 54681b68e575ead4167ea9ee6e32c51ccc5fc017 Mon Sep 17 00:00:00 2001
+From: Shubhraprakash Das <sadas@codeaurora.org>
+Date: Wed, 8 Jun 2011 17:55:53 -0600
+Subject: [PATCH] msm: kgsl: Reconstruct the ringbuffer correctly during
+ recovery
+
+Make sure while extracting commands the identifier
+commands do not get added twice.
+
+Change-Id: Ic1593ef091489c5bcbdbc3e06fe815f521752600
+Signed-off-by: Shubhraprakash Das <sadas@codeaurora.org>
+---
+ drivers/gpu/msm/adreno_ringbuffer.c |   11 +++++++----
+ 1 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/msm/adreno_ringbuffer.c b/drivers/gpu/msm/adreno_ringbuffer.c
+index 0d8cd83..3b462e2 100644
+--- a/drivers/gpu/msm/adreno_ringbuffer.c
++++ b/drivers/gpu/msm/adreno_ringbuffer.c
+@@ -863,6 +863,13 @@ int kgsl_ringbuffer_extract(struct kgsl_ringbuffer *rb,
+ 			rmb();
+ 			BUG_ON((copy_rb_contents == 0) &&
+ 				(value == cur_context));
++			/*
++			 * If we were copying the commands and got to this point
++			 * then we need to remove the 3 commands that appear
++			 * before KGSL_CONTEXT_TO_MEM_IDENTIFIER
++			 */
++			if (temp_idx)
++				temp_idx -= 3;
+ 			/* if context switches to a context that did not cause
+ 			 * hang then start saving the rb contents as those
+ 			 * commands can be executed */
+@@ -879,10 +886,6 @@ int kgsl_ringbuffer_extract(struct kgsl_ringbuffer *rb,
+ 				temp_rb_buffer[temp_idx++] = val1;
+ 				temp_rb_buffer[temp_idx++] = value;
+ 			} else {
+-				/* if temp_idx is not 0 then we do not need to
+-				 * copy extra dwords indicating a kernel cmd */
+-				if (temp_idx)
+-					temp_idx -= 3;
+ 				copy_rb_contents = 0;
+ 			}
+ 		} else if (copy_rb_contents)
+-- 
+1.7.5.4
+

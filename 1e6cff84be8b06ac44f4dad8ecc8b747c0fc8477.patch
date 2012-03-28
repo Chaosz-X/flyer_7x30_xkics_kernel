@@ -1,0 +1,44 @@
+From 1e6cff84be8b06ac44f4dad8ecc8b747c0fc8477 Mon Sep 17 00:00:00 2001
+From: Jeremy Gebben <jgebben@codeaurora.org>
+Date: Mon, 8 Aug 2011 17:04:11 -0600
+Subject: [PATCH] msm: kgsl: fix parameter checking in
+ adreno_ringbuffer_issueibcmds
+
+Change-Id: Icdcaad5f1897a1264e13d687644effd48fe542d5
+Signed-off-by: Jeremy Gebben <jgebben@codeaurora.org>
+
+Conflicts:
+
+	drivers/gpu/msm/adreno_ringbuffer.c
+---
+ drivers/gpu/msm/adreno_ringbuffer.c |    9 ++++-----
+ 1 files changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/msm/adreno_ringbuffer.c b/drivers/gpu/msm/adreno_ringbuffer.c
+index 2c7845e..c6bf7ff 100644
+--- a/drivers/gpu/msm/adreno_ringbuffer.c
++++ b/drivers/gpu/msm/adreno_ringbuffer.c
+@@ -669,16 +669,15 @@ int kgsl_ringbuffer_close(struct kgsl_ringbuffer *rb)
+ 	unsigned int *link;
+ 	unsigned int *cmds;
+ 	unsigned int i;
+-	struct kgsl_yamato_context *drawctxt = context->devctxt;
++	struct kgsl_yamato_context *drawctxt;
+ 
+ 	if (device->state & KGSL_STATE_HUNG)
+ 		return -EBUSY;
+-	if (!(yamato_device->ringbuffer.flags & KGSL_FLAGS_STARTED) ||
+-	      context == NULL)
++	if (!(yamato_devce->ringbuffer.flags & KGSL_FLAGS_STARTED) ||
++	      context == NULL || ibdesc == 0 || numibs == 0)
+ 		return -EINVAL;
+ 
+-	BUG_ON(ibdesc == 0);
+-	BUG_ON(numibs == 0);
++	drawctxt = context->devctxt;
+ 
+ 	if (drawctxt->flags & CTXT_FLAGS_GPU_HANG) {
+ 		KGSL_CTXT_WARN(device, "Context %p caused a gpu hang.."
+-- 
+1.7.5.4
+

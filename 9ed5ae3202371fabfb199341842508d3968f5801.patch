@@ -1,0 +1,554 @@
+From 9ed5ae3202371fabfb199341842508d3968f5801 Mon Sep 17 00:00:00 2001
+From: Jordan Crouse <jcrouse@codeaurora.org>
+Date: Tue, 27 Dec 2011 03:32:19 +0100
+Subject: [PATCH] msm: kgsl: Add KGSL_IOCTL_GPUMEM_ALLOC
+
+Add a general purpose GPU memory allocation ioctl.  This takes the
+memory type decision out of the hands of the userspace and puts it
+into the kernel.  Future code can mainipulate kgsl_gpumem_allocate
+to point to the appropriate memory allocation function for the
+bus type and MMU state.
+
+Change-Id: Iab6eed5e823b92a26fc64cda85c74414f1ed0b14
+Signed-off-by: Jordan Crouse <jcrouse@codeaurora.org>
+---
+ drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c     |  245 ++++++++++++++------
+ drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.h     |   15 ++-
+ .../msm/gpu/kgsl_adreno205_hc/kgsl_cmdstream.c     |    2 +-
+ .../msm/gpu/kgsl_adreno205_hc/kgsl_sharedmem.c     |   27 +++
+ .../msm/gpu/kgsl_adreno205_hc/kgsl_sharedmem.h     |   15 +-
+ include/linux/msm_kgsl.h                           |   11 +-
+ 6 files changed, 238 insertions(+), 77 deletions(-)
+
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
+index 51cf852..9aeac0e 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
+@@ -57,6 +57,52 @@
+ MODULE_PARM_DESC(kgsl_pagetable_count,
+ "Minimum number of pagetables for KGSL to allocate at initialization time");
+ 
++static inline struct kgsl_mem_entry *
++kgsl_mem_entry_create(void)
++{
++	struct kgsl_mem_entry *entry = kzalloc(sizeof(*entry), GFP_KERNEL);
++
++	if (!entry)
++		KGSL_CORE_ERR("kzalloc(%d) failed\n", sizeof(*entry));
++	else
++		kref_init(&entry->refcount);
++
++	return entry;
++}
++
++void
++kgsl_mem_entry_destroy(struct kref *kref)
++{
++	struct kgsl_mem_entry *entry = container_of(kref,
++						    struct kgsl_mem_entry,
++						    refcount);
++	size_t size = entry->memdesc.size;
++
++	kgsl_sharedmem_free(&entry->memdesc);
++
++	if (entry->memtype == KGSL_VMALLOC_MEMORY)
++		entry->priv->stats.vmalloc -= size;
++	else {
++		if (entry->file_ptr)
++			fput(entry->file_ptr);
++
++		entry->priv->stats.exmem -= size;
++	}
++
++	kfree(entry);
++}
++
++static
++void kgsl_mem_entry_attach_process(struct kgsl_mem_entry *entry,
++				   struct kgsl_process_private *process)
++{
++	spin_lock(&process->mem_lock);
++	list_add(&entry->list, &process->mem_list);
++	spin_unlock(&process->mem_lock);
++
++	entry->priv = process;
++}
++
+ /* Allocate a new context id */
+ 
+ struct kgsl_context *
+@@ -129,7 +175,7 @@ static void kgsl_memqueue_cleanup(struct kgsl_device *device,
+ 	list_for_each_entry_safe(entry, entry_tmp, &device->memqueue, list) {
+ 		if (entry->priv == private) {
+ 			list_del(&entry->list);
+-			kgsl_destroy_mem_entry(entry);
++			kgsl_mem_entry_put(entry);
+ 		}
+ 	}
+ }
+@@ -167,7 +213,7 @@ static void kgsl_memqueue_drain(struct kgsl_device *device)
+ 			break;
+ 
+ 		list_del(&entry->list);
+-		kgsl_destroy_mem_entry(entry);
++		kgsl_mem_entry_put(entry);
+ 	}
+ }
+ 
+@@ -543,7 +589,7 @@ int kgsl_resume_driver(struct platform_device *pdev)
+ 
+ 	list_for_each_entry_safe(entry, entry_tmp, &private->mem_list, list) {
+ 		list_del(&entry->list);
+-		kgsl_destroy_mem_entry(entry);
++		kgsl_mem_entry_put(entry);
+ 	}
+ 
+ #ifdef CONFIG_MSM_KGSL_MMU
+@@ -1117,24 +1163,6 @@ static long kgsl_ioctl_drawctxt_destroy(struct kgsl_device_private *dev_priv,
+ 	return result;
+ }
+ 
+-void kgsl_destroy_mem_entry(struct kgsl_mem_entry *entry)
+-{
+-	size_t size = entry->memdesc.size;
+-
+-	kgsl_sharedmem_free(&entry->memdesc);
+-
+-	if (entry->memtype == KGSL_VMALLOC_MEMORY)
+-		entry->priv->stats.vmalloc -= size;
+-	else {
+-		if (entry->file_ptr)
+-			fput(entry->file_ptr);
+-
+-		entry->priv->stats.exmem -= size;
+-	}
+-
+-	kfree(entry);
+-}
+-
+ static long kgsl_ioctl_sharedmem_free(struct kgsl_device_private *dev_priv,
+ 					unsigned int cmd, void *data)
+ {
+@@ -1150,7 +1178,7 @@ static long kgsl_ioctl_sharedmem_free(struct kgsl_device_private *dev_priv,
+ 	spin_unlock(&private->mem_lock);
+ 
+ 	if (entry) {
+-		kgsl_destroy_mem_entry(entry);
++		kgsl_mem_entry_put(entry);
+ 	} else {
+ 		KGSL_CORE_ERR("invalid gpuaddr %08x\n", param->gpuaddr);
+ 		result = -EINVAL;
+@@ -1212,11 +1240,14 @@ static long kgsl_ioctl_sharedmem_free(struct kgsl_device_private *dev_priv,
+ 		goto error;
+ 	}
+ 	len = vma->vm_end - vma->vm_start;
++	if (len == 0) {
++		KGSL_CORE_ERR("Invalid vma region length %d\n", len);
++		result = -EINVAL;
++		goto error;
++	}
+ 
+-	entry = kzalloc(sizeof(struct kgsl_mem_entry), GFP_KERNEL);
++	entry = kgsl_mem_entry_create();
+ 	if (entry == NULL) {
+-		KGSL_CORE_ERR("kzalloc(%d) failed\n",
+-			sizeof(struct kgsl_mem_entry));
+ 		result = -ENOMEM;
+ 		goto error;
+ 	}
+@@ -1227,8 +1258,6 @@ static long kgsl_ioctl_sharedmem_free(struct kgsl_device_private *dev_priv,
+ 	if (result != 0)
+ 		goto error_free_entry;
+ 
+-	entry->priv = private;
+-
+ 	if (!kgsl_cache_enable)
+ 		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+ 
+@@ -1242,13 +1271,11 @@ static long kgsl_ioctl_sharedmem_free(struct kgsl_device_private *dev_priv,
+ 
+ 	entry->memtype = KGSL_VMALLOC_MEMORY;
+ 
++	kgsl_mem_entry_attach_process(entry, private);
++
+ 	/* Process specific statistics */
+ 	KGSL_STATS_ADD(len, private->stats.vmalloc,
+-		private->stats.vmalloc_max);
+-
+-	spin_lock(&private->mem_lock);
+-	list_add(&entry->list, &private->mem_list);
+-	spin_unlock(&private->mem_lock);
++		       private->stats.vmalloc_max);
+ 
+ 	kgsl_check_idle(dev_priv->device);
+ 	return 0;
+@@ -1452,12 +1479,10 @@ static long kgsl_ioctl_map_user_mem(struct kgsl_device_private *dev_priv,
+ 	struct kgsl_mem_entry *entry = NULL;
+ 	struct kgsl_process_private *private = dev_priv->process_priv;
+ 
+-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+-	if (entry == NULL) {
+-		KGSL_DRV_ERR(dev_priv->device, "kzalloc(%d) failed\n",
+-			sizeof(*entry));
++	entry = kgsl_mem_entry_create();
++
++	if (entry == NULL)
+ 		return -ENOMEM;
+-	}
+ 
+ 	kgsl_memqueue_drain_unlocked(dev_priv->device);
+ 
+@@ -1513,7 +1538,6 @@ static long kgsl_ioctl_map_user_mem(struct kgsl_device_private *dev_priv,
+ 	if (result)
+ 		goto error_put_file_ptr;
+ 
+-	entry->priv = private;
+ 	param->gpuaddr = entry->memdesc.gpuaddr;
+ 
+ 	entry->memtype = KGSL_EXTERNAL_MEMORY;
+@@ -1522,9 +1546,7 @@ static long kgsl_ioctl_map_user_mem(struct kgsl_device_private *dev_priv,
+ 	KGSL_STATS_ADD(param->len, private->stats.exmem,
+ 		       private->stats.exmem_max);
+ 
+-	spin_lock(&private->mem_lock);
+-	list_add(&entry->list, &private->mem_list);
+-	spin_unlock(&private->mem_lock);
++	kgsl_mem_entry_attach_process(entry, private);
+ 
+ 	kgsl_check_idle(dev_priv->device);
+ 	return result;
+@@ -1581,6 +1603,35 @@ static long kgsl_ioctl_map_user_mem(struct kgsl_device_private *dev_priv,
+ 	return result;
+ }
+ 
++static long
++kgsl_ioctl_gpumem_alloc(struct kgsl_device_private *dev_priv,
++			unsigned int cmd, void *data)
++{
++	struct kgsl_process_private *private = dev_priv->process_priv;
++	struct kgsl_gpumem_alloc *param = data;
++	struct kgsl_mem_entry *entry;
++	int result;
++
++	entry = kgsl_mem_entry_create();
++	if (entry == NULL)
++		return -ENOMEM;
++
++	/* Make sure all pending freed memory is collected */
++	kgsl_memqueue_drain_unlocked(dev_priv->device);
++
++	result = kgsl_allocate_user(&entry->memdesc, private->pagetable,
++		param->size, param->flags);
++
++	if (result == 0) {
++		kgsl_mem_entry_attach_process(entry, private);
++		param->gpuaddr = entry->memdesc.gpuaddr;
++	} else
++		kfree(entry);
++
++	kgsl_check_idle(dev_priv->device);
++	return result;
++}
++
+ typedef long (*kgsl_ioctl_func_t)(struct kgsl_device_private *,
+ 	unsigned int, void *);
+ 
+@@ -1618,6 +1669,8 @@ typedef long (*kgsl_ioctl_func_t)(struct kgsl_device_private *,
+ 			kgsl_ioctl_sharedmem_from_vmalloc, 0),
+ 	KGSL_IOCTL_FUNC(IOCTL_KGSL_SHAREDMEM_FLUSH_CACHE,
+ 			kgsl_ioctl_sharedmem_flush_cache, 0),
++	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPUMEM_ALLOC,
++			kgsl_ioctl_gpumem_alloc, 0),
+ };
+ 
+ static long kgsl_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
+@@ -1693,50 +1746,100 @@ static long kgsl_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
+ 	return ret;
+ }
+ 
++static int
++kgsl_mmap_memstore(struct kgsl_device *device, struct vm_area_struct *vma)
++{
++	struct kgsl_memdesc *memdesc = &device->memstore;
++	int result;
++	unsigned int vma_size = vma->vm_end - vma->vm_start;
++
++	/* The memstore can only be mapped as read only */
++
++	if (vma->vm_flags & VM_WRITE)
++		return -EPERM;
++
++	if (memdesc->size  !=  vma_size) {
++		KGSL_MEM_ERR(device, "memstore bad size: %d should be %d\n",
++			     vma_size, memdesc->size);
++		return -EINVAL;
++	}
++
++	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
++
++	result = remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
++				 vma_size, vma->vm_page_prot);
++	if (result != 0)
++		KGSL_MEM_ERR(device, "remap_pfn_range failed: %d\n",
++			     result);
++
++	return result;
++}
++
++static int
++kgsl_gpumem_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
++{
++	struct kgsl_mem_entry *entry = vma->vm_private_data;
++
++	if (!entry->memdesc.ops->vmfault)
++		return VM_FAULT_SIGBUS;
++
++	return entry->memdesc.ops->vmfault(&entry->memdesc, vma, vmf);
++}
++
++static void
++kgsl_gpumem_vm_close(struct vm_area_struct *vma)
++{
++	struct kgsl_mem_entry *entry  = vma->vm_private_data;
++	kgsl_mem_entry_put(entry);
++}
++
++static struct vm_operations_struct kgsl_gpumem_vm_ops = {
++	.fault = kgsl_gpumem_vm_fault,
++	.close = kgsl_gpumem_vm_close,
++};
++
+ static int kgsl_mmap(struct file *file, struct vm_area_struct *vma)
+ {
+-	int result = 0;
+-	struct kgsl_memdesc *memdesc = NULL;
+-	unsigned long vma_size = vma->vm_end - vma->vm_start;
+ 	unsigned long vma_offset = vma->vm_pgoff << PAGE_SHIFT;
+ 	struct inode *inodep = file->f_path.dentry->d_inode;
++	struct kgsl_device_private *dev_priv = file->private_data;
++	struct kgsl_process_private *private = dev_priv->process_priv;
++	struct kgsl_mem_entry *entry;
+ 	struct kgsl_device *device;
+ 
+ 	device = kgsl_driver.devp[iminor(inodep)];
+ 	BUG_ON(device == NULL);
+ 
+-	mutex_lock(&device->mutex);
++	/* Handle leagacy behavior for memstore */
+ 
+-	/*allow device memstore to be mapped read only */
+-	if (vma_offset == device->memstore.physaddr) {
+-		if (vma->vm_flags & VM_WRITE) {
+-			result = -EPERM;
+-			goto done;
++	if (vma_offset == device->memstore.physaddr)
++		return kgsl_mmap_memstore(device, vma);
++
++	/* Find a chunk of GPU memory */
++
++	spin_lock(&private->mem_lock);
++	list_for_each_entry(entry, &private->mem_list, list) {
++		if (vma_offset == entry->memdesc.gpuaddr) {
++			kgsl_mem_entry_get(entry);
++			break;
+ 		}
+-		memdesc = &device->memstore;
+-	} else {
+-		result = -EINVAL;
+-		goto done;
+ 	}
++	spin_unlock(&private->mem_lock);
+ 
+-	if (memdesc->size != vma_size) {
+-		KGSL_MEM_ERR(device, "file %p bad size %ld, should be %d\n",
+-			file, vma_size, memdesc->size);
+-		result = -EINVAL;
+-		goto done;
+-	}
+-	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
++	if (entry == NULL)
++		return -EINVAL;
+ 
+-	result = remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
+-				vma_size, vma->vm_page_prot);
+-	if (result != 0) {
+-		KGSL_MEM_ERR(device, "remap_pfn_range returned %d\n",
+-			result);
+-		goto done;
+-	}
+-done:
+-	mutex_unlock(&device->mutex);
+-	return result;
++	if (!entry->memdesc.ops->vmflags || !entry->memdesc.ops->vmfault)
++		return -EINVAL;
++
++	vma->vm_flags |= entry->memdesc.ops->vmflags(&entry->memdesc);
++
++	vma->vm_private_data = entry;
++	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
++	vma->vm_ops = &kgsl_gpumem_vm_ops;
++	vma->vm_file = file;
++
++	return 0;
+ }
+ 
+ static const struct file_operations kgsl_fops = {
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.h b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.h
+index d1736e3..cbc64a7 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.h
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.h
+@@ -142,6 +142,7 @@ struct kgsl_driver {
+ #define KGSL_EXTERNAL_MEMORY 1
+ 
+ struct kgsl_mem_entry {
++	struct kref refcount;
+ 	struct kgsl_memdesc memdesc;
+ 	int memtype;
+ 	struct file *file_ptr;
+@@ -158,7 +159,7 @@ struct kgsl_mem_entry {
+ #define MMU_CONFIG 1
+ #endif
+ 
+-void kgsl_destroy_mem_entry(struct kgsl_mem_entry *entry);
++void kgsl_mem_entry_destroy(struct kref *kref);
+ uint8_t *kgsl_gpuaddr_to_vaddr(const struct kgsl_memdesc *memdesc,
+ 	unsigned int gpuaddr, unsigned int *size);
+ struct kgsl_mem_entry *kgsl_sharedmem_find_region(
+@@ -265,4 +266,16 @@ static inline bool timestamp_cmp(unsigned int new, unsigned int old)
+ 	return (ts_diff >= 0) || (ts_diff < -20000);
+ }
+ 
++static inline void
++kgsl_mem_entry_get(struct kgsl_mem_entry *entry)
++{
++	kref_get(&entry->refcount);
++}
++
++static inline void
++kgsl_mem_entry_put(struct kgsl_mem_entry *entry)
++{
++	kref_put(&entry->refcount, kgsl_mem_entry_destroy);
++}
++
+ #endif /* _GSL_DRIVER_H */
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_cmdstream.c b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_cmdstream.c
+index e4b0ee3..1dd78be 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_cmdstream.c
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_cmdstream.c
+@@ -30,7 +30,7 @@ int kgsl_cmdstream_close(struct kgsl_device *device)
+ 
+ 	list_for_each_entry_safe(entry, entry_tmp, &device->memqueue, list) {
+ 		list_del(&entry->list);
+-		kgsl_destroy_mem_entry(entry);
++		kgsl_mem_entry_put(entry);
+ 	}
+ 	return 0;
+ }
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_sharedmem.c b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_sharedmem.c
+index d07b46e..95610eb 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_sharedmem.c
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_sharedmem.c
+@@ -360,6 +360,31 @@ static void kgsl_vmalloc_outer_cache(struct kgsl_memdesc *memdesc, int op)
+ }
+ #endif
+ 
++static int kgsl_vmalloc_vmfault(struct kgsl_memdesc *memdesc,
++				struct vm_area_struct *vma,
++				struct vm_fault *vmf)
++{
++	unsigned long offset, pg;
++	struct page *page;
++
++	offset = (unsigned long) vmf->virtual_address - vma->vm_start;
++	pg = (unsigned long) memdesc->hostptr + offset;
++
++	page = vmalloc_to_page((void *) pg);
++	if (page == NULL)
++		return VM_FAULT_SIGBUS;
++
++	get_page(page);
++
++	vmf->page = page;
++	return 0;
++}
++
++static int kgsl_vmalloc_vmflags(struct kgsl_memdesc *memdesc)
++{
++	return VM_RESERVED | VM_DONTEXPAND;
++}
++
+ static void kgsl_vmalloc_free(struct kgsl_memdesc *memdesc)
+ {
+ 	kgsl_driver.stats.vmalloc -= memdesc->size;
+@@ -411,6 +436,8 @@ static unsigned long kgsl_userptr_physaddr(struct kgsl_memdesc *memdesc,
+ struct kgsl_memdesc_ops kgsl_vmalloc_ops = {
+ 	.physaddr = kgsl_vmalloc_physaddr,
+ 	.free = kgsl_vmalloc_free,
++	.vmflags = kgsl_vmalloc_vmflags,
++	.vmfault = kgsl_vmalloc_vmfault,
+ #ifdef CONFIG_OUTER_CACHE
+ 	.outer_cache = kgsl_vmalloc_outer_cache,
+ #endif
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_sharedmem.h b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_sharedmem.h
+index 025dd2b..0a47194 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_sharedmem.h
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_sharedmem.h
+@@ -47,9 +47,11 @@
+ struct kgsl_memdesc;
+ 
+ struct kgsl_memdesc_ops {
+-	unsigned long (*physaddr)(struct kgsl_memdesc *memdesc,
+-		unsigned int offset);
+-	void (*outer_cache)(struct kgsl_memdesc *memdesc, int op);
++	unsigned long (*physaddr)(struct kgsl_memdesc *, unsigned int);
++	void (*outer_cache)(struct kgsl_memdesc *, int);
++	int (*vmflags)(struct kgsl_memdesc *);
++	int (*vmfault)(struct kgsl_memdesc *, struct vm_area_struct *,
++		       struct vm_fault *);
+ 	void (*free)(struct kgsl_memdesc *memdesc);
+ };
+ 
+@@ -101,4 +103,11 @@ int kgsl_sharedmem_set(const struct kgsl_memdesc *memdesc,
+ int kgsl_sharedmem_init_sysfs(void);
+ void kgsl_sharedmem_uninit_sysfs(void);
+ 
++static inline int
++kgsl_allocate_user(struct kgsl_memdesc *memdesc,
++		struct kgsl_pagetable *pagetable,
++		size_t size, unsigned int flags)
++{
++	return kgsl_sharedmem_vmalloc_user(memdesc, pagetable, size, flags);
++}
+ #endif /* __GSL_SHAREDMEM_H */
+diff --git a/include/linux/msm_kgsl.h b/include/linux/msm_kgsl.h
+index 2da3e9f..c0ac369 100644
+--- a/include/linux/msm_kgsl.h
++++ b/include/linux/msm_kgsl.h
+@@ -30,7 +30,7 @@
+ #define _MSM_KGSL_H
+ 
+ #define KGSL_VERSION_MAJOR        3
+-#define KGSL_VERSION_MINOR        2
++#define KGSL_VERSION_MINOR        3
+ 
+ /*context flags */
+ #define KGSL_CONTEXT_SAVE_GMEM	1
+@@ -477,6 +477,15 @@ struct kgsl_cmdwindow_write {
+ #define IOCTL_KGSL_CMDWINDOW_WRITE \
+ 	_IOW(KGSL_IOC_TYPE, 0x2e, struct kgsl_cmdwindow_write)
+ 
++struct kgsl_gpumem_alloc {
++	unsigned long gpuaddr;
++	size_t size;
++	unsigned int flags;
++};
++
++#define IOCTL_KGSL_GPUMEM_ALLOC \
++	_IOWR(KGSL_IOC_TYPE, 0x2f, struct kgsl_gpumem_alloc)
++
+ #ifdef __KERNEL__
+ #ifdef CONFIG_MSM_KGSL_DRM
+ int kgsl_gem_obj_addr(int drm_fd, int handle, unsigned long *start,
+-- 
+1.7.5.4
+

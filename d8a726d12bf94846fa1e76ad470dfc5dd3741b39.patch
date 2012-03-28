@@ -1,0 +1,100 @@
+From d8a726d12bf94846fa1e76ad470dfc5dd3741b39 Mon Sep 17 00:00:00 2001
+From: Sushmita Susheelendra <ssusheel@codeaurora.org>
+Date: Tue, 27 Dec 2011 03:58:23 +0100
+Subject: [PATCH] msm: kgsl: Add CFF user event ioctl to write data to cff
+ dumps
+
+Add the ioctl IOCTL_KGSL_CFF_USER_EVENT to write data to cff dump.
+Define a new CFF packet cff_op_user_event for this generic user
+event.
+Write the surface parameter data packet and verify mem file
+packet to cff dumps
+
+Signed-off-by: Sushmita Susheelendra <ssusheel@codeaurora.org>
+---
+ drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c     |   14 ++++++++++++++
+ .../video/msm/gpu/kgsl_adreno205_hc/kgsl_cffdump.h |    3 +++
+ include/linux/msm_kgsl.h                           |   14 +++++++++++++-
+ 3 files changed, 30 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
+index 02b29d9..8942241 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
+@@ -1650,6 +1650,18 @@ static long kgsl_ioctl_cff_syncmem(struct kgsl_device_private *dev_priv,
+ 	return result;
+ }
+ 
++static long kgsl_ioctl_cff_user_event(struct kgsl_device_private *dev_priv,
++		unsigned int cmd, void *data)
++{
++	int result = 0;
++	struct kgsl_cff_user_event *param = data;
++
++	kgsl_cffdump_user_event(param->cff_opcode, param->op1, param->op2,
++			param->op3, param->op4, param->op5);
++
++	return result;
++}
++
+ typedef long (*kgsl_ioctl_func_t)(struct kgsl_device_private *,
+ 	unsigned int, void *);
+ 
+@@ -1691,6 +1703,8 @@ typedef long (*kgsl_ioctl_func_t)(struct kgsl_device_private *,
+ 			kgsl_ioctl_gpumem_alloc, 0),
+ 	KGSL_IOCTL_FUNC(IOCTL_KGSL_CFF_SYNCMEM,
+ 			kgsl_ioctl_cff_syncmem, 0),
++	KGSL_IOCTL_FUNC(IOCTL_KGSL_CFF_USER_EVENT,
++			kgsl_ioctl_cff_user_event, 0),
+ };
+ 
+ static long kgsl_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_cffdump.h b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_cffdump.h
+index 147dda9..ae72619 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_cffdump.h
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_cffdump.h
+@@ -51,6 +51,9 @@ void kgsl_cffdump_regpoll(enum kgsl_deviceid device_id, uint addr,
+ bool kgsl_cffdump_parse_ibs(struct kgsl_device_private *dev_priv,
+ 	const struct kgsl_memdesc *memdesc, uint gpuaddr, int sizedwords,
+ 	bool check_only);
++void kgsl_cffdump_user_event(unsigned int cff_opcode, unsigned int op1,
++		unsigned int op2, unsigned int op3,
++		unsigned int op4, unsigned int op5);
+ static inline bool kgsl_cffdump_flags_no_memzero(void) { return true; }
+ 
+ #else
+diff --git a/include/linux/msm_kgsl.h b/include/linux/msm_kgsl.h
+index 23d0512..46f6605 100644
+--- a/include/linux/msm_kgsl.h
++++ b/include/linux/msm_kgsl.h
+@@ -30,7 +30,7 @@
+ #define _MSM_KGSL_H
+ 
+ #define KGSL_VERSION_MAJOR        3
+-#define KGSL_VERSION_MINOR        6
++#define KGSL_VERSION_MINOR        7
+ 
+ /*context flags */
+ #define KGSL_CONTEXT_SAVE_GMEM	1
+@@ -282,6 +282,18 @@ struct kgsl_device_waittimestamp {
+ #define IOCTL_KGSL_DEVICE_WAITTIMESTAMP \
+ 	_IOW(KGSL_IOC_TYPE, 0x6, struct kgsl_device_waittimestamp)
+ 
++struct kgsl_cff_user_event {
++	unsigned char cff_opcode;
++	unsigned int op1;
++	unsigned int op2;
++	unsigned int op3;
++	unsigned int op4;
++	unsigned int op5;
++	unsigned int __pad[2];
++};
++
++#define IOCTL_KGSL_CFF_USER_EVENT \
++	_IOW(KGSL_IOC_TYPE, 0x31, struct kgsl_cff_user_event)
+ 
+ /* issue indirect commands to the GPU.
+  * drawctxt_id must have been created with IOCTL_KGSL_DRAWCTXT_CREATE
+-- 
+1.7.5.4
+

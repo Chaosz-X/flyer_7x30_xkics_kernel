@@ -1,0 +1,62 @@
+From dd4202c1a801c5a08ce04cb65e32776df88b5bc6 Mon Sep 17 00:00:00 2001
+From: Jeremy Gebben <jgebben@codeaurora.org>
+Date: Sat, 21 May 2011 16:12:20 -0600
+Subject: [PATCH] msm: kgsl: explicitly include <linux/sched.h>
+
+These files depend on sched.h which is being
+implictly included in some kernel versions but not
+in others.
+
+Change-Id: I880b28e8afe3d826154b6f91faf6971bf8d3c44e
+Signed-off-by: Jeremy Gebben <jgebben@codeaurora.org>
+
+Conflicts:
+
+	drivers/gpu/msm/adreno.c
+	drivers/gpu/msm/kgsl_mmu.c
+---
+ drivers/gpu/msm/adreno.c            |    1 +
+ drivers/gpu/msm/adreno_ringbuffer.c |    1 +
+ drivers/gpu/msm/kgsl_mmu.c          |    2 ++
+ 3 files changed, 4 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/gpu/msm/adreno.c b/drivers/gpu/msm/adreno.c
+index d87c735..f44c574 100644
+--- a/drivers/gpu/msm/adreno.c
++++ b/drivers/gpu/msm/adreno.c
+@@ -17,6 +17,7 @@
+  */
+ #include <linux/delay.h>
+ #include <linux/uaccess.h>
++#include <linux/sched.h>
+ 
+ #include <linux/vmalloc.h>
+ 
+diff --git a/drivers/gpu/msm/adreno_ringbuffer.c b/drivers/gpu/msm/adreno_ringbuffer.c
+index 3b462e2..7c295df 100644
+--- a/drivers/gpu/msm/adreno_ringbuffer.c
++++ b/drivers/gpu/msm/adreno_ringbuffer.c
+@@ -17,6 +17,7 @@
+  */
+ #include <linux/firmware.h>
+ #include <linux/slab.h>
++#include <linux/sched.h>
+ 
+ #include "kgsl.h"
+ #include "adreno.h"
+diff --git a/drivers/gpu/msm/kgsl_mmu.c b/drivers/gpu/msm/kgsl_mmu.c
+index 878ed59..5ea28a0 100644
+--- a/drivers/gpu/msm/kgsl_mmu.c
++++ b/drivers/gpu/msm/kgsl_mmu.c
+@@ -20,6 +20,8 @@
+ #include <linux/spinlock.h>
+ #include <linux/genalloc.h>
+ #include <linux/slab.h>
++#include <linux/sched.h>
++
+ #include "kgsl.h"
+ #include "kgsl_mmu.h"
+ #include "adreno_ringbuffer.h"
+-- 
+1.7.5.4
+

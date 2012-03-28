@@ -1,0 +1,25 @@
+From b3fdc526d8e9a15b6a84b8997c34f1e5282d6ddf Mon Sep 17 00:00:00 2001
+From: Davor Bertovic <davor@losinj.com>
+Date: Fri, 30 Dec 2011 21:40:34 +0100
+Subject: [PATCH] I commited the wrong change before
+
+---
+ drivers/video/msm/msm_fb.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/video/msm/msm_fb.c b/drivers/video/msm/msm_fb.c
+index 76d8f31..675060c 100644
+--- a/drivers/video/msm/msm_fb.c
++++ b/drivers/video/msm/msm_fb.c
+@@ -1140,7 +1140,7 @@ static void setup_fb_info(struct msmfb_info *msmfb)
+ 	fb_info->var.yres_virtual = msmfb->yres * 2;
+ 	fb_info->var.bits_per_pixel = BITS_PER_PIXEL_DEF;
+ 	fb_info->var.accel_flags = 0;
+-	fb_info->var.reserved[5] = 60;
++	fb_info->var.reserved[4] = 60;
+ 	fb_info->var.yoffset = 0;
+ 
+ 	if (msmfb->panel->caps & MSMFB_CAP_PARTIAL_UPDATES) {
+-- 
+1.7.5.4
+

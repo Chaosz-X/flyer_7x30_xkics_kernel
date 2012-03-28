@@ -1,0 +1,94 @@
+From c037f10656c0b95c51a13c0ae052ead64fa0f1f6 Mon Sep 17 00:00:00 2001
+From: Jordan Crouse <jcrouse@codeaurora.org>
+Date: Tue, 27 Dec 2011 12:32:03 +0100
+Subject: [PATCH] msm: kgsl: Add a generic inline function for allocating
+ contiguous memory.
+
+Change-Id: Idc86f97daf8d309d73c256e70beb18f0b5a1618b
+Signed-off-by: Jordan Crouse <jcrouse@codeaurora.org>
+---
+ drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c     |    4 ++--
+ drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_mmu.c |    3 ++-
+ .../msm/gpu/kgsl_adreno205_hc/kgsl_ringbuffer.c    |    7 +++----
+ .../msm/gpu/kgsl_adreno205_hc/kgsl_ringbuffer.h    |    6 ++++++
+ 4 files changed, 13 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
+index bcdc4da..7e03aab 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
+@@ -2255,8 +2255,8 @@ int kgsl_device_platform_probe(struct kgsl_device *device,
+ 	if (status != 0)
+ 		goto error_dest_work_q;
+ 
+-	status = kgsl_sharedmem_alloc_coherent(&device->memstore,
+-					sizeof(struct kgsl_devmemstore));
++	status = kgsl_allocate_contig(&device->memstore,
++			sizeof(struct kgsl_devmemstore));
+ 	if (status != 0)
+ 		goto error_close_mmu;
+ 
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_mmu.c b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_mmu.c
+index 4df99f3..c869620 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_mmu.c
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_mmu.c
+@@ -31,6 +31,7 @@
+ #include "kgsl.h"
+ #include "kgsl_log.h"
+ #include "kgsl_device.h"
++#include "kgsl_ringbuffer.h"
+ 
+ struct kgsl_pte_debug {
+ 	unsigned int read:1;
+@@ -806,7 +807,7 @@ int kgsl_mmu_init(struct kgsl_device *device)
+ 		/* allocate memory used for completing r/w operations that
+ 		 * cannot be mapped by the MMU
+ 		 */
+-		status = kgsl_sharedmem_alloc_coherent(&mmu->dummyspace, 64);
++		status = kgsl_allocate_contig(&mmu->dummyspace, 64);
+ 		if (!status)
+ 			kgsl_sharedmem_set(&mmu->dummyspace, 0, 0,
+ 					   mmu->dummyspace.size);
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_ringbuffer.c b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_ringbuffer.c
+index 62d2105..ca744cb 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_ringbuffer.c
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_ringbuffer.c
+@@ -535,8 +535,7 @@ int kgsl_ringbuffer_init(struct kgsl_device *device)
+ 	rb->blksizequadwords = kgsl_cfg_rb_blksizequadwords;
+ 
+ 	/* allocate memory for ringbuffer */
+-	status = kgsl_sharedmem_alloc_coherent(&rb->buffer_desc,
+-					       (rb->sizedwords << 2));
++	status = kgsl_allocate_contig(&rb->buffer_desc, (rb->sizedwords << 2));
+ 	if (status != 0) {
+ 		kgsl_ringbuffer_close(rb);
+ 		return status;
+@@ -545,8 +544,8 @@ int kgsl_ringbuffer_init(struct kgsl_device *device)
+ 	/* allocate memory for polling and timestamps */
+ 	/* This really can be at 4 byte alignment boundry but for using MMU
+ 	 * we need to make it at page boundary */
+-	status = kgsl_sharedmem_alloc_coherent(&rb->memptrs_desc,
+-					       sizeof(struct kgsl_rbmemptrs));
++	status = kgsl_allocate_contig(&rb->memptrs_desc,
++	       sizeof(struct kgsl_rbmemptrs));
+ 	if (status != 0) {
+ 		kgsl_ringbuffer_close(rb);
+ 		return status;
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_ringbuffer.h b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_ringbuffer.h
+index 5152093..71db0f7 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_ringbuffer.h
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl_ringbuffer.h
+@@ -202,4 +202,10 @@ static inline unsigned int adreno_ringbuffer_inc_wrapped(unsigned int val,
+ 	return (val + sizeof(unsigned int)) % size;
+ }
+ 
++static inline int
++kgsl_allocate_contig(struct kgsl_memdesc *memdesc, size_t size)
++{
++	return kgsl_sharedmem_alloc_coherent(memdesc, size);
++}
++
+ #endif  /* __GSL_RINGBUFFER_H */
+-- 
+1.7.5.4
+

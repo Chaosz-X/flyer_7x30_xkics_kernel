@@ -1,0 +1,52 @@
+From 2952341e481909a11623ccc0e2d9e4a2436716fa Mon Sep 17 00:00:00 2001
+From: Jeremy Gebben <jgebben@codeaurora.org>
+Date: Tue, 26 Apr 2011 11:39:26 -0600
+Subject: [PATCH] msm: kgsl: make register reads and writes use
+ _raw_readl/writel
+
+This shouldn't change actually functionality because an
+explicit barrier is added to make up for the ones
+from readl() and writel() before.
+
+Change-Id: If03e7ae4f18a4cdea578b4d7e5aa3df962f0e203
+Signed-off-by: Jeremy Gebben <jgebben@codeaurora.org>
+
+Conflicts:
+
+	drivers/gpu/msm/z180.c
+---
+ drivers/gpu/msm/adreno.c |   11 ++++++++---
+ 1 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/msm/adreno.c b/drivers/gpu/msm/adreno.c
+index 1b48a6e..0deecde 100644
+--- a/drivers/gpu/msm/adreno.c
++++ b/drivers/gpu/msm/adreno.c
+@@ -1017,7 +1017,10 @@ static void _yamato_regread(struct kgsl_device *device,
+ 	BUG_ON(offsetwords*sizeof(uint32_t) >= device->regspace.sizebytes);
+ 	reg = (unsigned int *)(device->regspace.mmio_virt_base
+ 				+ (offsetwords << 2));
+-	*value = readl(reg);
++	/*ensure this read finishes before the next one.
++	 * i.e. act like normal readl() */
++	*value = __raw_readl(reg);
++	rmb();
+ }
+ 
+ void kgsl_yamato_regread(struct kgsl_device *device, unsigned int offsetwords,
+@@ -1046,8 +1049,10 @@ static void _yamato_regwrite(struct kgsl_device *device,
+ 	reg = (unsigned int *)(device->regspace.mmio_virt_base
+ 				+ (offsetwords << 2));
+ 
+-	writel(value, reg);
+-
++	/*ensure previous writes post before this one,
++	 * i.e. act like normal writel() */
++	wmb();
++	__raw_writel(value, reg);
+ }
+ 
+ void kgsl_yamato_regwrite(struct kgsl_device *device, unsigned int offsetwords,
+-- 
+1.7.5.4
+

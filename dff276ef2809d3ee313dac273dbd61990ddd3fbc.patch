@@ -1,0 +1,61 @@
+From dff276ef2809d3ee313dac273dbd61990ddd3fbc Mon Sep 17 00:00:00 2001
+From: Jeremy Gebben <jgebben@codeaurora.org>
+Date: Tue, 26 Apr 2011 15:49:55 -0600
+Subject: [PATCH] msm: kgsl: clean up barriers in mmu map and unmap
+
+A barrier is only needed at the end of each map and unmap,
+not after each word is written.
+
+Change-Id: I3158d58a554567fb8db503b5f66bbf1ee862db25
+Signed-off-by: Jeremy Gebben <jgebben@codeaurora.org>
+---
+ drivers/gpu/msm/kgsl_mmu.c |   13 +++++++++----
+ 1 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/msm/kgsl_mmu.c b/drivers/gpu/msm/kgsl_mmu.c
+index 5ea28a0..11993e6 100644
+--- a/drivers/gpu/msm/kgsl_mmu.c
++++ b/drivers/gpu/msm/kgsl_mmu.c
+@@ -580,14 +580,16 @@ static int kgsl_cleanup_pt(struct kgsl_pagetable *pt)
+ kgsl_pt_map_set(struct kgsl_pagetable *pt, uint32_t pte, uint32_t val)
+ {
+ 	uint32_t *baseptr = (uint32_t *)pt->base.hostptr;
+-	writel(val, &baseptr[pte]);
++
++	writel_relaxed(val, &baseptr[pte]);
+ }
+ 
+ static inline uint32_t
+ kgsl_pt_map_getaddr(struct kgsl_pagetable *pt, uint32_t pte)
+ {
+ 	uint32_t *baseptr = (uint32_t *)pt->base.hostptr;
+-	return readl(&baseptr[pte]) & GSL_PT_PAGE_ADDR_MASK;
++	uint32_t ret = readl_relaxed(&baseptr[pte]) & GSL_PT_PAGE_ADDR_MASK;
++	return ret;
+ }
+ 
+ void kgsl_mh_intrcallback(struct kgsl_device *device)
+@@ -1000,7 +1002,8 @@ unsigned int kgsl_virtaddr_to_physaddr(void *virtaddr)
+ 	KGSL_STATS_ADD(memdesc->size, pagetable->stats.mapped,
+ 		       pagetable->stats.max_mapped);
+ 
+-	mb();
++	/* Post all writes to the pagetable */
++	wmb();
+ 
+ 	/* Invalidate tlb only if current page table used by GPU is the
+ 	 * pagetable that we used to allocate */
+@@ -1057,7 +1060,9 @@ unsigned int kgsl_virtaddr_to_physaddr(void *virtaddr)
+ 	pagetable->stats.entries--;
+ 	pagetable->stats.mapped -= range;
+ 
+-	mb();
++	/* Post all writes to the pagetable */
++	wmb();
++
+ 	spin_unlock(&pagetable->lock);
+ 
+ 	gen_pool_free(pagetable->pool, gpuaddr, range);
+-- 
+1.7.5.4
+

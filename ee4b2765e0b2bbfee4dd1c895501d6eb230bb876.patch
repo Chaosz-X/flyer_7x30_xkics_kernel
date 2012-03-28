@@ -1,0 +1,92 @@
+From ee4b2765e0b2bbfee4dd1c895501d6eb230bb876 Mon Sep 17 00:00:00 2001
+From: Jordan Crouse <jcrouse@codeaurora.org>
+Date: Fri, 16 Dec 2011 14:28:28 -0700
+Subject: [PATCH] base: genlock: Avoid a race condition when releasing locks
+
+Avoid a race condition if a lock gets released by all owners
+but a process fails to close a lock file descriptor and tries
+to reuse it.  Clearing the pointers to the data will ensure
+that attaching a dead lock will return an error.
+
+Change-Id: Ic0dedbadd693c7a22b027052cdd247370b28a7c5
+Signed-off-by: Jordan Crouse <jcrouse@codeaurora.org>
+---
+ drivers/base/genlock.c |   35 ++++++++++++++++++++++++++++++++++-
+ 1 files changed, 34 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/base/genlock.c b/drivers/base/genlock.c
+index 5063f9c..6fbc660 100644
+--- a/drivers/base/genlock.c
++++ b/drivers/base/genlock.c
+@@ -50,11 +50,28 @@ struct genlock_handle {
+ 				     taken */
+ };
+ 
++/*
++ * Create a spinlock to protect against a race condition when a lock gets
++ * released while another process tries to attach it
++ */
++
++static DEFINE_SPINLOCK(genlock_file_lock);
++
+ static void genlock_destroy(struct kref *kref)
+ {
+ 	struct genlock *lock = container_of(kref, struct genlock,
+ 			refcount);
+ 
++	/*
++	 * Clear the private data for the file descriptor in case the fd is
++	 * still active after the lock gets released
++	 */
++
++	spin_lock(&genlock_file_lock);
++	if (lock->file)
++		lock->file->private_data = NULL;
++	spin_unlock(&genlock_file_lock);
++
+ 	kfree(lock);
+ }
+ 
+@@ -65,6 +82,15 @@ static void genlock_destroy(struct kref *kref)
+ 
+ static int genlock_release(struct inode *inodep, struct file *file)
+ {
++	struct genlock *lock = file->private_data;
++	/*
++	 * Clear the refrence back to this file structure to avoid
++	 * somehow reusing the lock after the file has been destroyed
++	 */
++
++	if (lock)
++		lock->file = NULL;
++
+ 	return 0;
+ }
+ 
+@@ -121,7 +147,7 @@ static int genlock_get_fd(struct genlock *lock)
+ {
+ 	int ret;
+ 
+-	if (!lock->file)
++	if (lock->file == NULL)
+ 		return -EINVAL;
+ 
+ 	ret = get_unused_fd_flags(0);
+@@ -151,7 +177,14 @@ struct genlock *genlock_attach_lock(struct genlock_handle *handle, int fd)
+ 	if (file == NULL)
+ 		return ERR_PTR(-EBADF);
+ 
++	/*
++	 * take a spinlock to avoid a race condition if the lock is
++	 * released and then attached
++	 */
++
++	spin_lock(&genlock_file_lock);
+ 	lock = file->private_data;
++	spin_unlock(&genlock_file_lock);
+ 
+ 	fput(file);
+ 
+-- 
+1.7.5.4
+

@@ -1,0 +1,55 @@
+From 2ea3aeed5ef0475a4e18c63693db73e862298d71 Mon Sep 17 00:00:00 2001
+From: Jason Varbedian <jasonv@codeaurora.org>
+Date: Tue, 27 Dec 2011 03:49:37 +0100
+Subject: [PATCH] msm: kgsl: change readtimestamp from IOR to IOWR and keep
+ legacy
+
+Signed-off-by: Jason Varbedian <jasonv@codeaurora.org>
+---
+ drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c |    2 ++
+ include/linux/msm_kgsl.h                       |    7 +++++--
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
+index 9aeac0e..062cebf 100644
+--- a/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
++++ b/drivers/video/msm/gpu/kgsl_adreno205_hc/kgsl.c
+@@ -1689,6 +1689,8 @@ static long kgsl_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
+ 
+ 	if (cmd == IOCTL_KGSL_CMDSTREAM_FREEMEMONTIMESTAMP_OLD)
+ 		cmd = IOCTL_KGSL_CMDSTREAM_FREEMEMONTIMESTAMP;
++	else if (cmd == IOCTL_KGSL_CMDSTREAM_READTIMESTAMP_OLD)
++		cmd = IOCTL_KGSL_CMDSTREAM_READTIMESTAMP;
+ 
+ 	if (cmd & (IOC_IN | IOC_OUT)) {
+ 		if (_IOC_SIZE(cmd) < sizeof(ustack))
+diff --git a/include/linux/msm_kgsl.h b/include/linux/msm_kgsl.h
+index 57c971a..c896765 100644
+--- a/include/linux/msm_kgsl.h
++++ b/include/linux/msm_kgsl.h
+@@ -30,7 +30,7 @@
+ #define _MSM_KGSL_H
+ 
+ #define KGSL_VERSION_MAJOR        3
+-#define KGSL_VERSION_MINOR        4
++#define KGSL_VERSION_MINOR        5
+ 
+ /*context flags */
+ #define KGSL_CONTEXT_SAVE_GMEM	1
+@@ -321,9 +321,12 @@ struct kgsl_cmdstream_readtimestamp {
+ 	unsigned int timestamp; /*output param */
+ };
+ 
+-#define IOCTL_KGSL_CMDSTREAM_READTIMESTAMP \
++#define IOCTL_KGSL_CMDSTREAM_READTIMESTAMP_OLD \
+ 	_IOR(KGSL_IOC_TYPE, 0x11, struct kgsl_cmdstream_readtimestamp)
+ 
++#define IOCTL_KGSL_CMDSTREAM_READTIMESTAMP \
++	_IOWR(KGSL_IOC_TYPE, 0x11, struct kgsl_cmdstream_readtimestamp)
++
+ /* free memory when the GPU reaches a given timestamp.
+  * gpuaddr specify a memory region created by a
+  * IOCTL_KGSL_SHAREDMEM_FROM_PMEM call
+-- 
+1.7.5.4
+
